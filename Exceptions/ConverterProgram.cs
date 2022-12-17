@@ -31,16 +31,36 @@ namespace Exceptions
         private static void ConvertFiles(string[] filenames, Settings settings)
         {
             var tasks = filenames
-                .Select(fn => Task.Run(() => ConvertFile(fn, settings))) 
+                .Select(fn => Task.Run(() => ConvertFile(fn, settings)))
                 .ToArray();
-            Task.WaitAll(tasks); 
+            Task.WaitAll(tasks);
         }
 
-        private static Settings LoadSettings() 
+        private static Settings LoadSettings()
         {
             var serializer = new XmlSerializer(typeof(Settings));
-            var content = File.ReadAllText("settings.xml");
-            return (Settings) serializer.Deserialize(new StringReader(content));
+
+            var content = string.Empty;
+
+            try
+            {
+                content = File.ReadAllText("settings.xml");
+            }
+            catch (Exception e)
+            {
+                log.Error(e, "Файл настроек .* отсутствует.");
+                return Settings.Default;
+            }
+
+            try
+            {
+                return (Settings)serializer.Deserialize(new StringReader(content));
+            }
+            catch (Exception e)
+            {
+                log.Error(e, "Не удалось прочитать файл настроек");
+                return Settings.Default;
+            }
         }
 
         private static void ConvertFile(string filename, Settings settings)
@@ -52,18 +72,30 @@ namespace Exceptions
                 log.Info("Source Culture " + Thread.CurrentThread.CurrentCulture.Name);
             }
             IEnumerable<string> lines;
-            try 
+            try
             {
-                lines = PrepareLines(filename); 
+                lines = PrepareLines(filename);
             }
-            catch
+            catch (Exception e)
             {
-                log.Error($"File {filename} not found"); 
+                log.Error(e, $"File {filename} not found");
                 return;
             }
-            var convertedLines = lines
-                .Select(ConvertLine)
-                .Select(s => s.Length + " " + s);
+
+            IEnumerable<string> convertedLines;
+
+            try
+            {
+                convertedLines = lines
+                    .Select(ConvertLine)
+                    .Select(s => s.Length + " " + s);
+            }
+            catch (Exception e)
+            {
+                log.Error(e, e.Message);
+                return;
+            }
+
             File.WriteAllLines(filename + ".out", convertedLines);
         }
 
@@ -79,44 +111,89 @@ namespace Exceptions
             yield return lineIndex.ToString();
         }
 
-        public static string ConvertLine(string arg) 
-        {                                                
-            try
-            {
-                return ConvertAsDateTime(arg);
-            }
-            catch
-            {
-                try
-                {
-                    return ConvertAsDouble(arg);
-                }
-                catch
-                {
-                    return ConvertAsCharIndexInstruction(arg);
-                }
-            }
+        public static string ConvertLine(string arg)
+        {
+            var result = ConvertAsDateTime(arg);
+
+            if (result.Success)
+                return result.Object;
+
+            result = ConvertAsDouble(arg);
+
+            if (result.Success)
+                return result.Object;
+
+            result = ConvertAsCharIndexInstruction(arg);
+
+            if (result.Success)
+                return result.Object;
+
+            throw new ArgumentException("Некорректная строка");
+
+            //try
+            //{
+            //    return ConvertAsDateTime(arg);
+            //}
+            //catch
+            //{
+            //    try
+            //    {
+            //        return ConvertAsDouble(arg);
+            //    }
+            //    catch
+            //    {
+            //        return ConvertAsCharIndexInstruction(arg);
+            //    }
+            //}
         }
 
-        private static string ConvertAsCharIndexInstruction(string s)
+        private static Result ConvertAsCharIndexInstruction(string s)
         {
             var parts = s.Split();
-            if (parts.Length < 2) return null;
-            var charIndex = int.Parse(parts[0]);
+
+            if (parts.Length < 2) return new Result { Success = false, Object = null };
+
+            var result = new Result();
+
+            int charIndex = 0;
+
+            if (!(result.Success = int.TryParse(parts[0], out charIndex)))
+                return new Result { Success = false, Object = null };
+
+            //var charIndex = int.Parse(parts[0]);
+
             if ((charIndex < 0) || (charIndex >= parts[1].Length))
-                return null;
+                return new Result { Success = false, Object = null }; ;
             var text = parts[1];
-            return text[charIndex].ToString();
+
+            return new Result { Success = true, Object = text[charIndex].ToString() };
+            //return text[charIndex].ToString();
         }
 
-        private static string ConvertAsDateTime(string arg)
+        private static Result ConvertAsDateTime(string arg)
         {
-            return DateTime.Parse(arg).ToString(CultureInfo.InvariantCulture);
+            var result = new Result();
+
+            if (result.Success = DateTime.TryParse(arg, out var parseResult))
+                result.Object = parseResult.ToString(CultureInfo.InvariantCulture);
+
+            return result;
+            //return DateTime.Parse(arg).ToString(CultureInfo.InvariantCulture);
         }
 
-        private static string ConvertAsDouble(string arg)
+        private static Result ConvertAsDouble(string arg)
         {
-            return double.Parse(arg).ToString(CultureInfo.InvariantCulture);
+            var result = new Result();
+            if ((result.Success = double.TryParse(arg, out var parseResult)))
+                result.Object = parseResult.ToString(CultureInfo.InvariantCulture);
+            return result;
+            //return double.Parse(arg).ToString(CultureInfo.InvariantCulture);
+        }
+
+        class Result
+        {
+            public bool Success { get; set; }
+            public string Object { get; set; }
         }
     }
 }
